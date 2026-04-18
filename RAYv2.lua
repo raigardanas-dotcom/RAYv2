@@ -1,6 +1,6 @@
 -- RAYv2 Roblox Cheat for RIVALS
 -- Made by @ink
--- Compatible with Solana Executor (Level 7 UNC)
+-- Compatible with Solara Executor (Level 7 UNC)
 -- Full getgenv(), Drawing API, and advanced capabilities
 
 -- Services and Variables
@@ -97,6 +97,14 @@ local Settings = {
     }
 }
 
+-- Global Variables
+local GuiVisible = false
+local MainScreenGui = nil
+local AimbotTarget = nil
+local AimbotActive = false
+local ESPObjects = {}
+local FOVCircle = nil
+
 -- Utility Functions
 local function CreateGradient(colors, rotation)
     local gradient = Instance.new("UIGradient")
@@ -130,6 +138,46 @@ local function Tween(element, info, goal)
     return tween
 end
 
+local function GetClosestPlayer()
+    local closestPlayer = nil
+    local closestDistance = Settings.Aimbot.Reach
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Humanoid") and player.Character:FindFirstChild("HumanoidRootPart") then
+            local distance = (player.Character.HumanoidRootPart.Position - LocalPlayer.Character.HumanoidRootPart.Position).Magnitude
+            if distance <= closestDistance then
+                local screenPos, onScreen = Camera:WorldToViewportPoint(player.Character.HumanoidRootPart.Position)
+                if onScreen then
+                    closestDistance = distance
+                    closestPlayer = player
+                end
+            end
+        end
+    end
+    
+    return closestPlayer
+end
+
+local function GetAimbotTarget()
+    local target = GetClosestPlayer()
+    if target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
+        local targetPart = target.Character.HumanoidRootPart
+        if Settings.Aimbot.HeadPriority and target.Character:FindFirstChild("Head") then
+            targetPart = target.Character.Head
+        end
+        return targetPart
+    end
+    return nil
+end
+
+local function WorldToScreenPoint(position)
+    local screenPos, onScreen = Camera:WorldToViewportPoint(position)
+    if onScreen then
+        return Vector2.new(screenPos.X, screenPos.Y)
+    end
+    return nil
+end
+
 -- Loading Screen System
 local function CreateLoadingScreen()
     local ScreenGui = Instance.new("ScreenGui")
@@ -155,6 +203,7 @@ local function CreateLoadingScreen()
     ParticleContainer.Parent = MainFrame
     
     -- Create animated particles
+    local particles = {}
     for i = 1, 50 do
         local particle = Instance.new("Frame")
         particle.Size = UDim2.new(0, math.random(2, 4), 0, math.random(2, 4))
@@ -163,6 +212,7 @@ local function CreateLoadingScreen()
         particle.BackgroundTransparency = math.random(0.3, 0.8)
         CreateCorner(particle, 50)
         particle.Parent = ParticleContainer
+        table.insert(particles, particle)
         
         -- Animate particle
         spawn(function()
@@ -175,7 +225,8 @@ local function CreateLoadingScreen()
         end)
     end
     
-    -- Geometric Lines
+    -- Geometric Lines (store references)
+    local lines = {}
     for i = 1, 5 do
         local line = Instance.new("Frame")
         line.Size = UDim2.new(0, math.random(100, 300), 0, 1)
@@ -184,6 +235,7 @@ local function CreateLoadingScreen()
         line.BackgroundTransparency = 0.7
         line.Rotation = math.random(0, 360)
         line.Parent = MainFrame
+        table.insert(lines, line)
         
         spawn(function()
             local rotateTime = math.random(10, 20)
@@ -259,10 +311,9 @@ local function CreateLoadingScreen()
             connection:Disconnect()
             wait(0.5)
             
-            -- Fade out all loading screen elements
-            local fadeElements = {MainFrame, Title, MadeBy, LoadingBar, LoadingFill, ParticleContainer}
-            
-            for _, element in pairs(fadeElements) do
+            -- Fade out all elements
+            local allElements = {MainFrame, Title, MadeBy, LoadingBar, LoadingFill, ParticleContainer}
+            for _, element in pairs(allElements) do
                 if element and element.Parent then
                     if element:IsA("TextLabel") then
                         Tween(element, TweenInfo.new(0.5), {
@@ -276,20 +327,20 @@ local function CreateLoadingScreen()
                 end
             end
             
-            -- Also fade particles and lines
-            for _, child in pairs(ParticleContainer:GetChildren()) do
-                if child:IsA("GuiObject") then
-                    Tween(child, TweenInfo.new(0.5), {
+            -- Fade particles
+            for _, particle in pairs(particles) do
+                if particle.Parent then
+                    Tween(particle, TweenInfo.new(0.5), {
                         BackgroundTransparency = 1
                     })
                 end
             end
             
-            for _, child in pairs(MainFrame:GetChildren()) do
-                if child:IsA("GuiObject") and child ~= ParticleContainer then
-                    Tween(child, TweenInfo.new(0.5), {
-                        BackgroundTransparency = 1,
-                        TextTransparency = 1
+            -- Fade lines
+            for _, line in pairs(lines) do
+                if line.Parent then
+                    Tween(line, TweenInfo.new(0.5), {
+                        BackgroundTransparency = 1
                     })
                 end
             end
@@ -297,10 +348,11 @@ local function CreateLoadingScreen()
             wait(0.6)
             ScreenGui:Destroy()
             
-            -- Create main GUI with a small delay to ensure clean transition
+            -- Create main GUI with delay
             spawn(function()
                 wait(0.1)
                 CreateMainGUI()
+                InitializeCheatFeatures()
             end)
         end
     end)
@@ -308,10 +360,11 @@ end
 
 -- Main GUI Framework
 local function CreateMainGUI()
-    local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "RAYv2Main"
-    ScreenGui.Parent = CoreGui
-    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    MainScreenGui = Instance.new("ScreenGui")
+    MainScreenGui.Name = "RAYv2Main"
+    MainScreenGui.Parent = CoreGui
+    MainScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    MainScreenGui.Enabled = false
     
     -- Main Window
     local MainWindow = Instance.new("Frame")
@@ -320,7 +373,7 @@ local function CreateMainGUI()
     MainWindow.BackgroundColor3 = Theme.Secondary
     MainWindow.BorderSizePixel = 0
     CreateCorner(MainWindow, 10)
-    MainWindow.Parent = ScreenGui
+    MainWindow.Parent = MainScreenGui
     
     -- Window Shadow Effect
     local Shadow = Instance.new("Frame")
@@ -502,11 +555,13 @@ local function CreateMainGUI()
     
     -- Button Actions
     CloseButton.MouseButton1Click:Connect(function()
-        ScreenGui:Destroy()
+        MainScreenGui.Enabled = false
+        GuiVisible = false
     end)
     
     MinimizeButton.MouseButton1Click:Connect(function()
-        MainWindow.Visible = not MainWindow.Visible
+        MainScreenGui.Enabled = not MainScreenGui.Enabled
+        GuiVisible = MainScreenGui.Enabled
     end)
 end
 
@@ -689,6 +744,10 @@ local function CreateAimbotTab(parent)
     -- Aimbot Toggle
     local aimbotToggle, getAimbotState = CreateToggle(parent, "Aimbot", UDim2.new(0, 20, 0, 60), Settings.Aimbot.Enabled, function(state)
         Settings.Aimbot.Enabled = state
+        if not state then
+            AimbotTarget = nil
+            AimbotActive = false
+        end
     end)
     
     -- Keybind Input
@@ -710,14 +769,17 @@ local function CreateAimbotTab(parent)
     
     local fovSlider, getFOVValue = CreateSlider(parent, "FOV", UDim2.new(0, 20, 0, 340), 30, 360, Settings.Aimbot.FOV, function(value)
         Settings.Aimbot.FOV = value
+        UpdateFOVCircle()
     end)
     
     local fovCircleToggle, getFOVCircleState = CreateToggle(parent, "Show FOV Circle", UDim2.new(0, 20, 0, 400), Settings.Aimbot.ShowFOV, function(state)
         Settings.Aimbot.ShowFOV = state
+        UpdateFOVCircle()
     end)
     
     local fovFillToggle, getFOVFillState = CreateToggle(parent, "Fill FOV Circle", UDim2.new(0, 20, 0, 445), Settings.Aimbot.FillFOV, function(state)
         Settings.Aimbot.FillFOV = state
+        UpdateFOVCircle()
     end)
     
     -- Advanced Settings
@@ -777,6 +839,9 @@ local function CreateESPTab(parent)
     
     local espToggle, getESPState = CreateToggle(parent, "ESP", UDim2.new(0, 20, 0, 60), Settings.ESP.Enabled, function(state)
         Settings.ESP.Enabled = state
+        if not state then
+            ClearESP()
+        end
     end)
     
     -- ESP Options
@@ -905,9 +970,8 @@ local function CreateConfigsTab(parent)
                 Timestamp = timestamp
             }
             
-            -- Save to persistent storage (using Roblox DataStore simulation)
+            -- Save to persistent storage
             local success, error = pcall(function()
-                -- This would use actual DataStore in production
                 getgenv().RAYv2_Configs = HttpService:JSONEncode(RAYv2.Configs)
             end)
             
@@ -923,8 +987,6 @@ local function CreateConfigsTab(parent)
                 local configName = child.Text:match("^(.+) %(")
                 if configName and RAYv2.Configs[configName] then
                     Settings = RAYv2.Configs[configName].Settings
-                    -- Reload UI with new settings
-                    -- This would update all UI elements in production
                     break
                 end
             end
@@ -1209,7 +1271,6 @@ local function CreateAdminDashboard()
         RoleButton.MouseButton1Click:Connect(function()
             local userId = tonumber(RoleInput.Text)
             if userId then
-                -- Assign role logic would go here
                 print("Assigned " .. role.name .. " role to UserID: " .. userId)
                 RoleInput.Text = ""
             end
@@ -1221,6 +1282,233 @@ local function CreateAdminDashboard()
     
     CloseButton.MouseButton1Click:Connect(function()
         ScreenGui:Destroy()
+    end)
+end
+
+-- FOV Circle Management
+local function CreateFOVCircle()
+    if FOVCircle then
+        FOVCircle:Remove()
+    end
+    
+    if not Settings.Aimbot.ShowFOV then
+        return
+    end
+    
+    FOVCircle = Drawing.new("Circle")
+    FOVCircle.Visible = true
+    FOVCircle.Radius = (Settings.Aimbot.FOV / 360) * Camera.ViewportSize.X
+    FOVCircle.Color = Settings.ESP.Colors.Tracers
+    FOVCircle.Thickness = 2
+    FOVCircle.Filled = Settings.Aimbot.FillFOV
+    FOVCircle.Transparency = Settings.Aimbot.FillFOV and 0.3 or 0.8
+end
+
+local function UpdateFOVCircle()
+    if FOVCircle then
+        FOVCircle.Visible = Settings.Aimbot.ShowFOV
+        FOVCircle.Radius = (Settings.Aimbot.FOV / 360) * Camera.ViewportSize.X
+        FOVCircle.Color = Settings.ESP.Colors.Tracers
+        FOVCircle.Thickness = 2
+        FOVCircle.Filled = Settings.Aimbot.FillFOV
+        FOVCircle.Transparency = Settings.Aimbot.FillFOV and 0.3 or 0.8
+    else
+        CreateFOVCircle()
+    end
+end
+
+-- ESP Functions
+local function ClearESP()
+    for _, obj in pairs(ESPObjects) do
+        if obj and obj.Remove then
+            obj:Remove()
+        end
+    end
+    ESPObjects = {}
+end
+
+local function DrawESP()
+    if not Settings.ESP.Enabled then
+        ClearESP()
+        return
+    end
+    
+    ClearESP()
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local distance = (player.Character.HumanoidRootPart.Position - LocalPlayer.Character.HumanoidRootPart.Position).Magnitude
+            if distance <= Settings.ESP.MaxDistance then
+                local screenPos = WorldToScreenPoint(player.Character.HumanoidRootPart.Position)
+                if screenPos then
+                    -- Box ESP
+                    if Settings.ESP.Boxes then
+                        local box = Drawing.new("Square")
+                        box.Visible = true
+                        box.Size = Vector2.new(40, 60)
+                        box.Position = screenPos - Vector2.new(20, 30)
+                        box.Color = Settings.ESP.Colors.Boxes
+                        box.Thickness = 2
+                        box.Filled = Settings.ESP.FillBoxes
+                        box.Transparency = Settings.ESP.FillBoxes and 0.3 or 1
+                        table.insert(ESPObjects, box)
+                    end
+                    
+                    -- Name ESP
+                    if Settings.ESP.Name then
+                        local name = Drawing.new("Text")
+                        name.Visible = true
+                        name.Text = player.Name
+                        name.Position = screenPos - Vector2.new(20, 40)
+                        name.Color = Settings.ESP.Colors.Name
+                        name.Size = 14
+                        name.Font = 2
+                        table.insert(ESPObjects, name)
+                    end
+                    
+                    -- Health ESP
+                    if Settings.ESP.Health and player.Character:FindFirstChild("Humanoid") then
+                        local health = player.Character.Humanoid.Health
+                        local maxHealth = player.Character.Humanoid.MaxHealth
+                        local healthPercent = health / maxHealth
+                        
+                        local healthBar = Drawing.new("Square")
+                        healthBar.Visible = true
+                        healthBar.Size = Vector2.new(40, 4)
+                        healthBar.Position = screenPos - Vector2.new(20, 35)
+                        healthBar.Color = Color3.fromRGB(255, 0, 0)
+                        healthBar.Filled = true
+                        healthBar.Transparency = 0.8
+                        table.insert(ESPObjects, healthBar)
+                        
+                        local healthFill = Drawing.new("Square")
+                        healthFill.Visible = true
+                        healthFill.Size = Vector2.new(40 * healthPercent, 4)
+                        healthFill.Position = screenPos - Vector2.new(20, 35)
+                        healthFill.Color = Settings.ESP.Colors.Health
+                        healthFill.Filled = true
+                        table.insert(ESPObjects, healthFill)
+                    end
+                    
+                    -- Tracer ESP
+                    if Settings.ESP.Tracers then
+                        local tracer = Drawing.new("Line")
+                        tracer.Visible = true
+                        tracer.From = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
+                        tracer.To = screenPos
+                        tracer.Color = Settings.ESP.Colors.Tracers
+                        tracer.Thickness = 2
+                        table.insert(ESPObjects, tracer)
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Cheat Feature Initialization
+local function InitializeCheatFeatures()
+    -- Create FOV Circle
+    CreateFOVCircle()
+    
+    -- Aimbot Logic
+    RunService.Heartbeat:Connect(function()
+        if Settings.Aimbot.Enabled and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            AimbotTarget = GetAimbotTarget()
+            
+            if AimbotTarget then
+                if Settings.Aimbot.SilentAim then
+                    -- Silent aim - modify camera CFrame without visible movement
+                    local targetPos = AimbotTarget.Position
+                    local currentPos = Camera.CFrame.Position
+                    local lookAt = CFrame.new(currentPos, targetPos)
+                    
+                    -- Apply prediction
+                    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+                        local velocity = AimbotTarget.Velocity
+                        targetPos = targetPos + velocity * Settings.Aimbot.Prediction
+                        lookAt = CFrame.new(currentPos, targetPos)
+                    end
+                    
+                    -- Apply smoothness
+                    local smoothedCFrame = Camera.CFrame:lerp(lookAt, 1 / Settings.Aimbot.Smoothness)
+                    Camera.CFrame = smoothedCFrame
+                else
+                    -- Regular aimbot - visible camera movement
+                    local targetPos = AimbotTarget.Position
+                    local currentPos = Camera.CFrame.Position
+                    local lookAt = CFrame.new(currentPos, targetPos)
+                    
+                    -- Apply prediction
+                    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+                        local velocity = AimbotTarget.Velocity
+                        targetPos = targetPos + velocity * Settings.Aimbot.Prediction
+                        lookAt = CFrame.new(currentPos, targetPos)
+                    end
+                    
+                    -- Apply smoothness
+                    local smoothedCFrame = Camera.CFrame:lerp(lookAt, 1 / Settings.Aimbot.Smoothness)
+                    Camera.CFrame = smoothedCFrame
+                end
+            end
+        end
+    end)
+    
+    -- Triggerbot Logic
+    local lastTriggerTime = 0
+    RunService.Heartbeat:Connect(function()
+        if Settings.Triggerbot.Enabled and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+            local target = GetClosestPlayer()
+            if target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
+                local screenPos = WorldToScreenPoint(target.Character.HumanoidRootPart.Position)
+                if screenPos then
+                    local distance = (screenPos - Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)).Magnitude
+                    if distance < 50 then -- Within crosshair range
+                        local currentTime = tick()
+                        if currentTime - lastTriggerTime >= (Settings.Triggerbot.Delay / 1000) then
+                            -- Trigger shot
+                            mouse1press()
+                            wait(0.05)
+                            mouse1release()
+                            lastTriggerTime = currentTime
+                        end
+                    end
+                end
+            end
+        end
+    end)
+    
+    -- ESP Render Loop
+    RunService.Heartbeat:Connect(function()
+        DrawESP()
+        UpdateFOVCircle()
+    end)
+    
+    -- GUI Toggle with INSERT key
+    UserInputService.InputBegan:Connect(function(input)
+        if input.KeyCode == Enum.KeyCode.Insert then
+            GuiVisible = not GuiVisible
+            if MainScreenGui then
+                MainScreenGui.Enabled = GuiVisible
+            end
+        end
+    end)
+    
+    -- Aimbot Keybind Handler
+    UserInputService.InputBegan:Connect(function(input)
+        if input.UserInputType == Settings.Aimbot.Key then
+            if Settings.Aimbot.Mode == "Toggle" then
+                AimbotActive = not AimbotActive
+            elseif Settings.Aimbot.Mode == "Hold" then
+                AimbotActive = true
+            end
+        end
+    end)
+    
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Settings.Aimbot.Key and Settings.Aimbot.Mode == "Hold" then
+            AimbotActive = false
+        end
     end)
 end
 
